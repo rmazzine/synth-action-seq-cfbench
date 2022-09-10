@@ -3,10 +3,12 @@ from recourse.result import SearchResult, ParamsResult
 from common.log import logger
 
 import tensorflow as tf
+import tensorflow.compat.v1 as v1
 import numpy as np
 import math, json, os
 
 from datetime import datetime
+
 
 class SequenceSearch(object):
     def __init__(self, model, actions, heuristics, config, sav_dir=None, label_cost_fn=relu_cost_fn):
@@ -35,19 +37,19 @@ class SequenceSearch(object):
             result.update(sequence_result)
 
         if self.sav_dir is not None:
-            json.dump(result.summary(), open(os.path.join(self.sav_dir, 'summary.json'),'w'), indent=4)
+            json.dump(result.summary(), open(os.path.join(self.sav_dir, 'summary.json'), 'w'), indent=4)
 
         return result
 
 
 class ParamsSearch(object):
-    
+
     def __init__(self, model, sequence, input_shape, label_shape, label_cost_fn, config,
                  batch_size=1, sequence_search='enumerate', sav_dir=None):
         self.sav_dir = sav_dir
 
-        self.init_p = tf.constant(np.array(sum([action.init_p for action in sequence], []) * batch_size),
-                                  dtype=tf.float32)
+        self.init_p = v1.constant(np.array(sum([action.init_p for action in sequence], []) * batch_size),
+                                  dtype=v1.float32)
         self.learning_rate = config.learning_rate
         self.adam_beta1 = config.adam_beta1
         self.adam_beta2 = config.adam_beta2
@@ -62,28 +64,28 @@ class ParamsSearch(object):
         self.search_search = sequence_search
 
         self.sequence = sequence
-        self.p = tf.Variable(self.init_p, dtype=tf.float32)
-        self.instance = tf.placeholder(shape=input_shape, dtype=tf.float32)
+        self.p = v1.Variable(self.init_p, dtype=v1.float32)
+        self.instance = v1.placeholder(shape=input_shape, dtype=v1.float32)
 
-        self.target_label = tf.placeholder(shape=(None, label_shape), dtype=tf.float32)
-        self.c = tf.placeholder(shape=(1,), dtype=tf.float32)
+        self.target_label = v1.placeholder(shape=(None, label_shape), dtype=v1.float32)
+        self.c = v1.placeholder(shape=(1,), dtype=v1.float32)
 
         self.final_instance, path = self.transform(self.instance, sequence, self.p)
         self.cost = self.get_cost(path, sequence)
 
-        self.output = model(self.final_instance)
+        self.output = model.model(self.final_instance)
         self.f = label_cost_fn(self.output, self.target_label)
 
-        self.loss = tf.reduce_sum(self.cost) + tf.reduce_sum(self.c * self.f)
+        self.loss = v1.reduce_sum(self.cost) + v1.reduce_sum(self.c * self.f)
         if 'Numeric' not in set([action.type for action in sequence]):
             self.minimize = None
-            self.init = tf.variables_initializer(var_list=[self.p])
+            self.init = v1.variables_initializer(var_list=[self.p])
         else:
-            optimizer = tf.train.AdamOptimizer(self.learning_rate, self.adam_beta1, self.adam_beta2,
+            optimizer = v1.train.AdamOptimizer(self.learning_rate, self.adam_beta1, self.adam_beta2,
                                                self.adam_eps)
             self.minimize = optimizer.minimize(self.loss, var_list=[self.p])
 
-            self.init = tf.variables_initializer(var_list=[self.p] + optimizer.variables())
+            self.init = v1.variables_initializer(var_list=[self.p] + optimizer.variables())
 
     def transform(self, instance, sequence, params):
         path = [instance]
@@ -92,9 +94,9 @@ class ParamsSearch(object):
         return path[-1], path
 
     def get_cost(self, path, sequence):
-        cost = tf.constant(0., dtype=tf.float32)
+        cost = v1.constant(0., dtype=v1.float32)
         for i, action in enumerate(sequence):
-            cost += action.get_cost(path[i], path[i+1])
+            cost += action.get_cost(path[i], path[i + 1])
         return cost
 
     def find_params(self, instance, target, sess):
@@ -110,8 +112,8 @@ class ParamsSearch(object):
                            self.target_label: target,
                            self.c: c})
             result.update(loss, cost, f[0], p, final[0])
-            reached = f[0]==0.
-            logger.debug('Final: loss=%.9f cost=%.9f, f=%s, params=%s' % (result.loss, result.cost, result.f, result.p))    
+            reached = f[0] == 0.
+            logger.debug('Final: loss=%.9f cost=%.9f, f=%s, params=%s' % (result.loss, result.cost, result.f, result.p))
             return result, reached
 
         check_every = 100
@@ -149,15 +151,15 @@ class ParamsSearch(object):
                     iteration, c[0], loss, cost, f, p))
 
                 if self.abort_early:
-                    
+
                     # print('Checking:', result.success, cost, result.cost, f, result.f)
-                    if not result.success and f[0] > 0.9999*result.f:
+                    if not result.success and f[0] > 0.9999 * result.f:
                         result.update(loss, cost, f[0], p, final[0])
                         break
 
                     if result.success:
-                        if f[0]==0.:
-                            if cost > 0.9999*result.cost:
+                        if f[0] == 0.:
+                            if cost > 0.9999 * result.cost:
                                 result.update(loss, cost, f[0], p, final[0])
                                 break
                         else:
@@ -165,9 +167,10 @@ class ParamsSearch(object):
 
             result.update(loss, cost, f[0], p, final[0])
 
-        logger.debug('Final %d: loss=%.9f cost=%.9f, f=%s, params=%s' % (iteration, result.loss, result.cost, result.f, result.p))    
+        logger.debug('Final %d: loss=%.9f cost=%.9f, f=%s, params=%s' % (
+        iteration, result.loss, result.cost, result.f, result.p))
         if self.sav_dir is not None:
-            json.dump(result.summary(), open(os.path.join(self.sav_dir, result.name+'.json'),'w'), indent=4)
+            json.dump(result.summary(), open(os.path.join(self.sav_dir, result.name + '.json'), 'w'), indent=4)
 
         return result, target_reached
 
@@ -177,4 +180,4 @@ class ParamsStrokeSearch(ParamsSearch):
                  config, batch_size=1, sequence_search='enumerate'):
         super().__init__(model, sequence, input_shape_1, label_shape, label_cost_fn, config,
                          batch_size, sequence_search)
-        self.instance = tf.placeholder(shape=(None, input_shape_1, input_shape_2), dtype=tf.float32)
+        self.instance = v1.placeholder(shape=(None, input_shape_1, input_shape_2), dtype=v1.float32)
